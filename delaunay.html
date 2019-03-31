@@ -1,0 +1,178 @@
+<html>
+<head>
+    <title>Delaunay triangulation</title>
+    <script src="math.min.js"></script>
+</head>
+
+<body>
+
+<h1>Delaunay triangulation</h1>
+
+<script src="math.min.js"></script>
+<script src="three.min.js"></script>
+<script src="OrbitControls.js"></script>
+
+<script type="text/javascript" src="Lanzarote.json.js"></script>
+<script type="text/javascript" src="triangulation.js"></script>
+
+<script type="text/javascript">
+
+    function computeExtents(points) {
+
+        var extents = {
+            "xmin": Number.MAX_VALUE,
+            "xmax": -Number.MAX_VALUE,
+            "ymin": Number.MAX_VALUE,
+            "ymax": -Number.MAX_VALUE,
+            "zmin": Number.MAX_VALUE,
+            "zmax": -Number.MAX_VALUE
+        };
+
+        for (var i = 0; i < points.length; i++) {
+            var p = points[i];
+            if (p.x < extents.xmin)
+                extents.xmin = p.x;
+            if (p.y < extents.ymin)
+                extents.ymin = p.y;
+            if (p.x > extents.xmax)
+                extents.xmax = p.x;
+            if (p.y > extents.ymax)
+                extents.ymax = p.y;
+            if (p.z > extents.zmax)
+                extents.zmax = p.z;
+            if (p.z < extents.zmin)
+                extents.zmin = p.z;
+        }
+
+        return extents;
+    }
+
+    function transformPointToScene(p) {
+        var xfact = 200 / (extents.xmax - extents.xmin);
+        var yfact = 200 / (extents.ymax - extents.ymin);
+        var zfact = 4 / (extents.zmax - extents.zmin);
+
+        return {
+            "x": (p.x - extents.xmin) * xfact,
+            "y": (p.y - extents.ymin) * yfact,
+            "z": (p.z - extents.zmin) * zfact
+        };
+    }
+
+    function sortCounterclockwise(circle_points) {
+        var vector12 = {x: circle_points[1].x - circle_points[0].x, y: circle_points[1].y - circle_points[0].y};
+        var vector13 = {x: circle_points[2].x - circle_points[0].x, y: circle_points[2].y - circle_points[0].y};
+
+        var det = vector12.x * vector13.y - vector12.y * vector13.x;
+
+        if (det < 0) {
+            var point = circle_points[0];
+            circle_points[0] = circle_points[2];
+            circle_points[2] = point;
+        }
+
+        return circle_points;
+    }
+
+    function createTriangleMesh(triangle) {
+        var material = new THREE.MeshStandardMaterial({color: 0x00cc00});
+
+        var p0 = transformPointToScene(triangle[0]);
+        var p1 = transformPointToScene(triangle[1]);
+        var p2 = transformPointToScene(triangle[2]);
+
+        //create a triangular geometry
+        var geometry = new THREE.Geometry();
+        geometry.vertices.push(new THREE.Vector3(p0.x, p0.y, p0.z));
+        geometry.vertices.push(new THREE.Vector3(p1.x, p1.y, p1.z));
+        geometry.vertices.push(new THREE.Vector3(p2.x, p2.y, p2.z));
+
+        //create a new face using vertices 0, 1, 2
+        var color = new THREE.Color(0xffaa00); //optional
+        var face = new THREE.Face3(0, 1, 2, color);
+
+        //add the face to the geometry's faces array, and compute normals
+        geometry.faces.push(face);
+        geometry.computeFaceNormals();
+        geometry.computeVertexNormals();
+
+        return new THREE.Mesh(geometry, material);
+    }
+
+    // This is the input
+    var points = inputJSON.points;// Requires inputJSON variable set in json.js file
+    var boundaries = inputJSON.boundaries;
+    var extents = computeExtents(points);
+
+    /**
+     * Partially based on code by Ikaros Kappler from http://int2byte.de/public/blog.20160129_Three.js_Basic_Scene_Setup/
+     **/
+    var windowWidth = 1200.0, windowHeight = 800.0;
+
+    this.scene = new THREE.Scene();
+
+    // Create a camera
+    var camera = new THREE.PerspectiveCamera(45, windowWidth / windowHeight, 0.1, 1000);
+
+    // Create a THREE renderer
+    this.renderer = new THREE.WebGLRenderer({antialias: true, alpha: true});
+    this.shadowMapEnabled = true;
+    this.renderer.setSize(windowWidth, windowHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // position and point the camera to the center of the scene (0,0,0)
+    camera.position.x = 0;
+    camera.position.y = 0;
+    camera.position.z = 400;
+    camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+    var light = new THREE.HemisphereLight(0xffffbb, 0x080820, 2);
+    scene.add(light);
+
+    //Transform objects to arrays to use Delaunay library
+    var vertices = new Array(points.length);
+    for (var i = 0; i < points.length; i++) {
+        vertices[i] = [points[i].x, points[i].y];
+    }
+
+    // This is the triangulation method
+    var triangles = computeTriangulation(points, boundaries);
+
+    for (var i = 0; i < triangles.length; i++) {
+        var trianglesSorted = sortCounterclockwise(triangles[i]);
+        scene.add(createTriangleMesh(trianglesSorted));
+    }
+
+    // Add an axis helper
+    var ah = new THREE.AxisHelper(50);
+    this.scene.add(ah);
+
+    // Add an orbit control helper, to navigate scene with mouse
+    var _self = this;
+    this.orbitControls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+
+    this.orbitControls.enableDamping = false;
+    this.orbitControls.dampingFactor = 1.0;
+    this.orbitControls.enableZoom = true;
+    this.orbitControls.enableRotation = false;
+    this.orbitControls.target.copy(new THREE.Vector3(0, 0, 0));
+    this.orbitControls.screenSpacePanning = true;
+
+    // This is the basic render function. It will be called perpetual, again and again,
+    // depending on your machine's possible frame rate.
+    this._render = function () {
+        // Pass the render function itself
+        requestAnimationFrame(this._render);
+        this.renderer.render(this.scene, this.camera);
+    };
+
+    // Call the rendering function. This will cause an infinite recursion
+    this._render();
+
+</script>
+<br>
+Note: X axis is red, Y axis is green, Z axis is blue.<br>
+Mouse navigation: left button rotates, right button pans, middle button zooms.
+</body>
+
+</html>
